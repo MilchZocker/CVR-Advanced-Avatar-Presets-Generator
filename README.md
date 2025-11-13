@@ -1,5 +1,9 @@
 # CVR Advanced Avatar Preset Generator - Documentation
 
+## NOTE
+Theres an Issue when using the Animator Driver as a Component, For now it only works correctly when you choose "Use State Machine Mode"!
+
+
 ## Overview
 
 **CVR Advanced Avatar Preset Generator** is a Unity editor tool designed for ChilloutVR avatars that allows creators to build and manage preset systems for their avatar parameters. It provides an intuitive way to create parameter configurations that can be quickly switched between, reducing the complexity of managing multiple avatar states.
