@@ -9,6 +9,13 @@ using UnityEditor.Animations;
 using UnityEngine;
 using UnityEditorInternal;
 
+// Add these aliases to resolve ambiguity
+using AnimatorController = UnityEditor.Animations.AnimatorController;
+using AnimatorControllerLayer = UnityEditor.Animations.AnimatorControllerLayer;
+using AnimatorStateMachine = UnityEditor.Animations.AnimatorStateMachine;
+using AnimatorState = UnityEditor.Animations.AnimatorState;
+using AnimatorStateTransition = UnityEditor.Animations.AnimatorStateTransition;
+
 namespace ABI.CCK.Components
 {
     [CustomEditor(typeof(CVRPresetManager))]
@@ -83,11 +90,23 @@ namespace ABI.CCK.Components
             serializedObject.Update();
             if (_avatar == null)
             {
-                EditorGUILayout.HelpBox("CVRPresetManager must be on the same GameObject as CVRAvatar", MessageType.Error);
+                EditorGUILayout.HelpBox("CVR Advanced Avatar Preset Generator must be on the same GameObject as CVRAvatar", MessageType.Error);
                 return;
             }
 
             EditorGUILayout.Space();
+            
+            // Mode selection toggle
+            EditorGUILayout.LabelField("Generation Mode", EditorStyles.boldLabel);
+            _presetManager.useStateMachineMode = EditorGUILayout.Toggle("Use State Machine Mode", _presetManager.useStateMachineMode);
+            EditorGUILayout.HelpBox(
+                _presetManager.useStateMachineMode
+                    ? "State Machine Mode: Uses AnimatorDriver behaviour on animator states (cleaner, more efficient, recommended)"
+                    : "Component Mode: Uses CVRAnimatorDriver components on GameObjects (compatible with all CCK versions)",
+                MessageType.Info
+            );
+            EditorGUILayout.Space();
+
             if (GUILayout.Button("Refresh Available Parameters"))
                 RefreshAvailableParameters();
 
@@ -249,8 +268,19 @@ namespace ABI.CCK.Components
             }
 
             CreatePresetDropdown();
-            CreateAnimatorDrivers();
-            CreateAnimatorLogic();
+
+            if (_presetManager.useStateMachineMode)
+            {
+                CleanupOldDrivers();
+                CreateAnimatorLogicWithStateMachineBehaviour();
+            }
+            else
+            {
+                CreateAnimatorDrivers();
+                CreateAnimatorLogicWithComponents();
+            }
+
+            EditorUtility.SetDirty(_presetManager);
             EditorUtility.DisplayDialog("Success", "Preset system generated successfully!", "OK");
             AssetDatabase.SaveAssets();
         }
@@ -279,13 +309,20 @@ namespace ABI.CCK.Components
             _avatar.avatarSettings.settings.Insert(0, dropdownEntry);
         }
 
-        private void CreateAnimatorDrivers()
+        private void CleanupOldDrivers()
         {
-            // Remove old drivers
+            // Remove old driver GameObjects
             var drivers = _presetManager.transform.GetComponentsInChildren<CVRAnimatorDriver>(true)
                 .Where(d => d.name.StartsWith("PresetDriver_")).ToList();
             foreach (var d in drivers)
                 DestroyImmediate(d.gameObject);
+        }
+
+        #region Component Mode
+
+        private void CreateAnimatorDrivers()
+        {
+            CleanupOldDrivers();
 
             // Create drivers for each preset
             for (int presetIndex = 0; presetIndex < _presetManager.presets.Count; presetIndex++)
@@ -307,13 +344,9 @@ namespace ABI.CCK.Components
                     for (int i = 0; i < chunkParams.Count && i < 16; i++)
                     {
                         var paramValue = chunkParams[i];
-                        while (driver.animators.Count <= i) driver.animators.Add(null);
-                        while (driver.animatorParameters.Count <= i) driver.animatorParameters.Add("");
-                        while (driver.animatorParameterType.Count <= i) driver.animatorParameterType.Add(0);
-
-                        driver.animators[i] = targetAnimator;
-                        driver.animatorParameters[i] = paramValue.parameterName;
-                        driver.animatorParameterType[i] = GetParameterTypeIndex(paramValue.parameterType);
+                        driver.animators.Add(targetAnimator);
+                        driver.animatorParameters.Add(paramValue.parameterName);
+                        driver.animatorParameterType.Add(GetParameterTypeIndex(paramValue.parameterType));
                         SetDriverParameterValue(driver, i, paramValue);
                     }
 
@@ -323,7 +356,7 @@ namespace ABI.CCK.Components
             }
         }
 
-        private void CreateAnimatorLogic()
+        private void CreateAnimatorLogicWithComponents()
         {
             if (_avatar?.avatarSettings?.baseController == null)
             {
@@ -331,7 +364,7 @@ namespace ABI.CCK.Components
                 return;
             }
 
-            var controller = _avatar.avatarSettings.baseController as UnityEditor.Animations.AnimatorController;
+            var controller = _avatar.avatarSettings.baseController as AnimatorController;
             if (controller == null)
             {
                 EditorUtility.DisplayDialog("Error", "Base controller is not an AnimatorController!", "OK");
@@ -355,11 +388,11 @@ namespace ABI.CCK.Components
             if (existingLayerIdx >= 0)
                 controller.RemoveLayer(existingLayerIdx);
 
-            var layer = new UnityEditor.Animations.AnimatorControllerLayer
+            var layer = new AnimatorControllerLayer
             {
                 name = layerName,
                 defaultWeight = 1f,
-                stateMachine = new UnityEditor.Animations.AnimatorStateMachine()
+                stateMachine = new AnimatorStateMachine()
             };
             layer.stateMachine.name = layerName;
             AssetDatabase.AddObjectToAsset(layer.stateMachine, controller);
@@ -368,13 +401,11 @@ namespace ABI.CCK.Components
             for (int presetIdx = 0; presetIdx < _presetManager.presets.Count; presetIdx++)
             {
                 var state = layer.stateMachine.AddState($"Preset_{presetIdx:D2}");
-
                 var clip = CreateCombinedPresetAnimationClip(presetIdx);
-
                 state.motion = clip;
 
                 var transition = layer.stateMachine.AddAnyStateTransition(state);
-                transition.AddCondition(UnityEditor.Animations.AnimatorConditionMode.Equals, presetIdx, "PresetSelector");
+                transition.AddCondition(AnimatorConditionMode.Equals, presetIdx, "PresetSelector");
                 transition.duration = 0f;
                 transition.hasExitTime = false;
                 transition.canTransitionToSelf = false;
@@ -385,7 +416,6 @@ namespace ABI.CCK.Components
             AssetDatabase.SaveAssets();
         }
 
-        // New: Combine all relevant curves for all drivers for this preset into a single clip
         private AnimationClip CreateCombinedPresetAnimationClip(int presetIdx)
         {
             var clip = new AnimationClip();
@@ -423,7 +453,6 @@ namespace ABI.CCK.Components
                         var paramName = driver.animatorParameters[paramFieldIdx];
                         if (!string.IsNullOrEmpty(paramName))
                         {
-                            // Find the value in the preset's parameterValues
                             var paramValue = _presetManager.presets[presetIdx].parameterValues
                                 .FirstOrDefault(pv => pv.parameterName == paramName && pv.update);
                             if (paramValue != null)
@@ -471,6 +500,119 @@ namespace ABI.CCK.Components
             return clip;
         }
 
+        #endregion
+
+        #region State Machine Behaviour Mode
+
+        private void CreateAnimatorLogicWithStateMachineBehaviour()
+        {
+            if (_avatar?.avatarSettings?.baseController == null)
+            {
+                EditorUtility.DisplayDialog("Error", "Base controller not set in avatar settings!", "OK");
+                return;
+            }
+
+            var controller = _avatar.avatarSettings.baseController as AnimatorController;
+            if (controller == null)
+            {
+                EditorUtility.DisplayDialog("Error", "Base controller is not an AnimatorController!", "OK");
+                return;
+            }
+
+            // Add PresetSelector parameter if it doesn't exist
+            if (!controller.parameters.Any(p => p.name == "PresetSelector"))
+            {
+                controller.AddParameter(new UnityEngine.AnimatorControllerParameter
+                {
+                    name = "PresetSelector",
+                    type = UnityEngine.AnimatorControllerParameterType.Int,
+                    defaultInt = 0
+                });
+            }
+
+            // Remove or update preset system layer
+            string layerName = "PresetSystem";
+            int existingLayerIdx = System.Array.FindIndex(controller.layers, l => l.name == layerName);
+            if (existingLayerIdx >= 0)
+                controller.RemoveLayer(existingLayerIdx);
+
+            var layer = new AnimatorControllerLayer
+            {
+                name = layerName,
+                defaultWeight = 1f,
+                stateMachine = new AnimatorStateMachine()
+            };
+            layer.stateMachine.name = layerName;
+            AssetDatabase.AddObjectToAsset(layer.stateMachine, controller);
+
+            // Create empty animation clip for states
+            var emptyClip = new AnimationClip { name = "Empty" };
+            var emptyClipPath = "Assets/PresetEmpty.anim";
+            if (!AssetDatabase.LoadAssetAtPath<AnimationClip>(emptyClipPath))
+                AssetDatabase.CreateAsset(emptyClip, emptyClipPath);
+            else
+                emptyClip = AssetDatabase.LoadAssetAtPath<AnimationClip>(emptyClipPath);
+
+            // For each preset, create state(s) with AnimatorDriver behaviour (chunked if needed)
+            for (int presetIdx = 0; presetIdx < _presetManager.presets.Count; presetIdx++)
+            {
+                var preset = _presetManager.presets[presetIdx];
+                var updatedParams = preset.parameterValues.Where(pv => pv.update).ToList();
+
+                // Still need to chunk since AnimatorDriverTask list might get long
+                // and we want to keep states manageable
+                int totalParams = updatedParams.Count;
+                int chunksNeeded = Mathf.Max(1, totalParams); // One state per preset, all params in EnterTasks
+                
+                var state = layer.stateMachine.AddState($"Preset_{presetIdx:D2}");
+                state.motion = emptyClip;
+
+                // Add AnimatorDriver StateMachineBehaviour
+                var animatorDriver = state.AddStateMachineBehaviour<AnimatorDriver>();
+
+                // Create EnterTasks for all parameters
+                foreach (var paramValue in updatedParams)
+                {
+                    var task = new AnimatorDriverTask
+                    {
+                        targetName = paramValue.parameterName,
+                        targetType = ConvertToAnimatorDriverParameterType(paramValue.parameterType),
+                        op = AnimatorDriverTask.Operator.Set,
+                        aType = AnimatorDriverTask.SourceType.Static,
+                        aValue = GetParameterValueAsFloat(paramValue)
+                    };
+
+                    animatorDriver.EnterTasks.Add(task);
+                }
+
+                // Add transition
+                var transition = layer.stateMachine.AddAnyStateTransition(state);
+                transition.AddCondition(AnimatorConditionMode.Equals, presetIdx, "PresetSelector");
+                transition.duration = 0f;
+                transition.hasExitTime = false;
+                transition.canTransitionToSelf = false;
+            }
+
+            controller.AddLayer(layer);
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.SaveAssets();
+        }
+
+        private AnimatorDriverTask.ParameterType ConvertToAnimatorDriverParameterType(CVRAdvancesAvatarSettingBase.ParameterType paramType)
+        {
+            return paramType switch
+            {
+                CVRAdvancesAvatarSettingBase.ParameterType.Float => AnimatorDriverTask.ParameterType.Float,
+                CVRAdvancesAvatarSettingBase.ParameterType.Int => AnimatorDriverTask.ParameterType.Int,
+                CVRAdvancesAvatarSettingBase.ParameterType.Bool => AnimatorDriverTask.ParameterType.Bool,
+                _ => AnimatorDriverTask.ParameterType.Float
+            };
+        }
+
+        #endregion
+
+        #region Helper Methods
+
         private int GetParameterTypeIndex(CVRAdvancesAvatarSettingBase.ParameterType paramType)
         {
             return paramType switch
@@ -516,6 +658,8 @@ namespace ABI.CCK.Components
                 _ => paramValue.floatValue,
             };
         }
+
+        #endregion
     }
 }
 #endif

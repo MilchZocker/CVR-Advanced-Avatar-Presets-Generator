@@ -36,6 +36,9 @@ namespace ABI.CCK.Components
         public List<CVRPreset> presets = new List<CVRPreset>();
         public List<CVRPresetParameter> availableParameters = new List<CVRPresetParameter>();
         
+        [Header("Generation Settings")]
+        public bool useStateMachineMode = false;
+        
         [Header("Runtime Settings")]
         public string dropdownParameterName = "PresetSelector";
 
@@ -46,14 +49,22 @@ namespace ABI.CCK.Components
 
         void Start()
         {
-            avatar = GetComponent<CVRAvatar>();
-            GatherPresetDrivers();
-            UpdatePresetDrivers();
+            // Only needed for component mode
+            if (!useStateMachineMode)
+            {
+                avatar = GetComponent<CVRAvatar>();
+                GatherPresetDrivers();
+                UpdatePresetDrivers();
+            }
         }
 
         void Update()
         {
-            UpdatePresetDrivers();
+            // Only needed for component mode
+            if (!useStateMachineMode)
+            {
+                UpdatePresetDrivers();
+            }
         }
 
         void GatherPresetDrivers()
@@ -81,7 +92,6 @@ namespace ABI.CCK.Components
 
             var anim = avatar.GetComponent<Animator>();
             int presetIndex = 0;
-
             if (anim.HasParameterOfType(dropdownParameterName, AnimatorControllerParameterType.Int))
                 presetIndex = anim.GetInteger(dropdownParameterName);
 
