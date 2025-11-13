@@ -37,7 +37,7 @@ namespace ABI.CCK.Components
         public List<CVRPresetParameter> availableParameters = new List<CVRPresetParameter>();
         
         [Header("Generation Settings")]
-        public bool useStateMachineMode = false;
+        public bool useStateMachineMode = true;
         
         [Header("Runtime Settings")]
         public string dropdownParameterName = "PresetSelector";
@@ -116,3 +116,4 @@ namespace ABI.CCK.Components
         }
     }
 }
+
